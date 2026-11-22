@@ -1,7 +1,7 @@
 export type Point = { x:number; y:number; strength:number }
 
 // Minimum eigenvalue of the local gradient matrix: strong in two directions at corners.
-export function detect(rgba:Uint8ClampedArray,width:number,height:number,spacing:number):Point[]{
+export function detect(rgba:Uint8ClampedArray,width:number,height:number,spacing:number,threshold=110):Point[]{
   const gray=new Float32Array(width*height)
   for(let i=0;i<gray.length;i++) gray[i]=.299*rgba[i*4]+.587*rgba[i*4+1]+.114*rgba[i*4+2]
   const candidates:Point[]=[]
@@ -14,7 +14,7 @@ export function detect(rgba:Uint8ClampedArray,width:number,height:number,spacing
       xx+=gx*gx;xy+=gx*gy;yy+=gy*gy
     }
     const strength=(xx+yy-Math.hypot(xx-yy,2*xy))/50
-    if(strength>110)candidates.push({x,y,strength})
+    if(strength>threshold)candidates.push({x,y,strength})
   }
   candidates.sort((a,b)=>b.strength-a.strength)
   const points:Point[]=[]
@@ -26,8 +26,9 @@ export function detect(rgba:Uint8ClampedArray,width:number,height:number,spacing
       const radius=Math.floor(Math.sqrt(spacing**2-(y-p.y)**2))
       occupied.fill(1,y*width+Math.max(0,p.x-radius),y*width+Math.min(width,p.x+radius+1))
     }
-    if(points.length===2000)break
+    if(points.length===3200)break
   }
   return points
 }
+
 

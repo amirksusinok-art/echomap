@@ -2,16 +2,18 @@ import {useEffect,useRef,useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import {Camera, ScanLine, Crosshair, Download, ShieldCheck, Grid3X3, Square} from 'lucide-react'
 import {detect} from './features.ts'
-import {PointMap,drawMap} from './point-map.ts'
+import {PointMap,inverse,project} from './point-map.ts'
+import {MapView} from './map-view.tsx'
+import type {Point} from './features.ts'
 import './camera.css'
 
 function App(){
   const video=useRef<HTMLVideoElement>(null)
   const overlay=useRef<HTMLCanvasElement>(null)
   const map=useRef(new PointMap())
-  const overview=useRef<HTMLCanvasElement>(null)
-  const [total,setTotal]=useState(0)
-  const [aligned,setAligned]=useState(true)
+  const [savedPoints,setSavedPoints]=useState<Point[]>([])
+  const [hint,setHint]=useState('')
+  const [detail,setDetail]=useState(false)
   const stream=useRef<MediaStream|null>(null)
   const request=useRef(0)
   const [phase,setPhase]=useState<'idle'|'loading'|'live'>('idle')
@@ -37,9 +39,6 @@ function App(){
   },[])
   async function start(){
     const id=++request.current
-    map.current=new PointMap();setTotal(0);setAligned(true)
-    const canvas=overview.current!
-    drawMap(canvas.getContext('2d')!,[],true)
     setError('');setPhase('loading')
     try{
       if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error('Для доступа к камере откройте сайт через HTTPS.')
@@ -52,7 +51,7 @@ function App(){
       const player=video.current!
       player.srcObject=input
       await player.play()
-      if(id===request.current)setPhase('live')
+      if(id===request.current){map.current=new PointMap();setSavedPoints([]);setHint('');setPhase('live')}
     }catch(cause){
       if(id!==request.current)return
       stop()
@@ -66,25 +65,30 @@ function App(){
     const input=document.createElement('canvas')
     const capture=input.getContext('2d',{willReadFrequently:true})!
     const out=layer.getContext('2d')!
-    let frame=0,lastTime=-1,lastScan=-Infinity
+    let frame=0,lastTime=-1,lastScan=-Infinity,misses=0
     function scan(now:number){
       if(player.readyState>=2&&player.videoWidth&&player.videoHeight&&player.currentTime!==lastTime&&now-lastScan>=80){
         lastTime=player.currentTime;lastScan=now
-        const scale=448/Math.max(player.videoWidth,player.videoHeight)
+        const scale=(detail?640:448)/Math.max(player.videoWidth,player.videoHeight)
         const w=Math.round(player.videoWidth*scale),h=Math.round(player.videoHeight*scale)
         if(input.width!==w||input.height!==h){input.width=w;input.height=h}
         if(layer.width!==player.videoWidth||layer.height!==player.videoHeight){layer.width=player.videoWidth;layer.height=player.videoHeight}
         capture.drawImage(player,0,0,w,h)
         const pixels=capture.getImageData(0,0,w,h).data
-        const features=detect(pixels,w,h,density)
-        const accepted=map.current.add(pixels,w,features)
-        setAligned(accepted)
+        let light=0,samples=0
+        for(let i=0;i<pixels.length;i+=64){light+=.299*pixels[i]+.587*pixels[i+1]+.114*pixels[i+2];samples++}
+        const features=detect(pixels,w,h,density,detail?65:110)
+        const before=map.current.size
+        const accepted=map.current.add(pixels,w,features,detail?3:1)
+        misses=accepted?0:misses+1
+        setHint(light/samples<36?'Мало света. Включите освещение.':
+          misses>=3&&before>0?'Вернитесь к предыдущему участку.':
+          (misses>0&&before>0)||map.current.motion>(detail?27:19)?'Двигайтесь медленнее.':
+          features.length<8?'Наведите камеру на контрастные детали.':'')
         const saved=map.current.points
-        setTotal(saved.length)
-        const preview=overview.current!
-        if(accepted)drawMap(preview.getContext('2d')!,saved,true)
-        const offset=map.current.offset
-        const visible=accepted?saved.map(p=>({...p,x:p.x-offset.x,y:p.y-offset.y})).filter(p=>p.x>=0&&p.y>=0&&p.x<w&&p.y<h):features
+        if(map.current.size!==before)setSavedPoints(saved)
+        const back=inverse(map.current.transform)
+        const visible=accepted?saved.map(p=>({...p,...project(back,p)})).filter(p=>p.x>=0&&p.y>=0&&p.x<w&&p.y<h):detail?[]:features
         out.clearRect(0,0,layer.width,layer.height)
         const sx=layer.width/w,sy=layer.height/h
         for(const p of visible){
@@ -99,7 +103,7 @@ function App(){
     }
     frame=requestAnimationFrame(scan)
     return ()=>cancelAnimationFrame(frame)
-  },[live,density])
+  },[live,density,detail])
   function download(){
     const layer=overlay.current!,player=video.current!
     const image=document.createElement('canvas')
@@ -128,6 +132,7 @@ function App(){
             <canvas ref={overlay} className={live?'':'concealed'} aria-label="Точки на деталях кадра"/>
             <div className="corners" aria-hidden="true"><i/><i/><i/><i/></div>
             {!live&&<div className="placeholder"><Crosshair size={44}/><span>{phase==='loading'?'Ожидание доступа к камере':'Включите камеру для сканирования'}</span></div>}
+            {live&&hint&&<div className="finder-hint" role="status">{hint}</div>}
             {live&&<div className="counter"><Grid3X3 size={15}/> Точек в кадре: {points}</div>}
           </div>
           <div className="controls">
@@ -138,22 +143,19 @@ function App(){
         </section>
         <aside className="card settings"><h2>Настройки</h2>
           <label>Камера<select value={facing} disabled={phase!=='idle'} onChange={e=>setFacing(e.target.value as typeof facing)}><option value="environment">Основная</option><option value="user">Фронтальная</option></select></label>
+          <label>Режим<select value={detail?'detail':'normal'} disabled={phase!=='idle'} onChange={e=>setDetail(e.target.value==='detail')}><option value="normal">Обычный</option><option value="detail">Детально</option></select></label>
           <label>Плотность точек<input type="range" min="3" max="16" value={18-density} onChange={e=>setDensity(18-+e.target.value)}/></label>
           <label className="check"><input type="checkbox" checked={dotsOnly} onChange={e=>setDotsOnly(e.target.checked)}/> Только точки</label>
           <div className="note"><Crosshair size={18}/><p>Ведите камеру медленно, оставляя знакомые детали в кадре. На карте сохраняются точки из совмещённых кадров.</p></div>
         </aside>
       </div>
-      <section className="card point-map"><div className="bar"><h2>Карта точек</h2><span className="badge">Накоплено: {total}</span></div>
-        <canvas ref={overview} width={900} height={400} aria-label="Накопленные точки сканирования"/>
-        {live&&!aligned&&<p role="status">Кадры не совпали. Верните камеру к последнему участку и продолжайте медленнее.</p>}
-        {!total&&<p>Здесь появятся точки из кадров камеры.</p>}
-        <button className="secondary" disabled={!total} onClick={()=>{const link=document.createElement('a');link.href=overview.current!.toDataURL();link.download='echomap-map.png';link.click()}}><Download size={17}/>Сохранить карту</button>
-      </section>
+      <MapView points={savedPoints} live={live}/>
       <footer><ShieldCheck size={17}/> Видео обрабатывается на устройстве.</footer>
     </main>
   </>
 }
 createRoot(document.getElementById('root')!).render(<App/>)
+
 
 
 

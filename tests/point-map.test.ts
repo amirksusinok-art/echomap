@@ -1,6 +1,6 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import {PointMap} from '../src/point-map.ts'
+import {PointMap,estimate,project} from '../src/point-map.ts'
 test('keeps old points and aligns a shifted frame',()=>{
   const map=new PointMap(),width=128
   function frame(shift:number,ids:number[]){
@@ -22,6 +22,21 @@ test('keeps old points and aligns a shifted frame',()=>{
   assert.deepEqual(map.offset,{x:16,y:0})
   assert.equal(map.size,7)
   assert.ok(map.points.some(p=>p.x===16))
+  const detailed=new PointMap()
+  assert.equal(detailed.add(a.pixels,width,a.points,3),true)
+  assert.equal(detailed.add(a.pixels,width,a.points,3),true)
+  assert.equal(detailed.size,0)
+  assert.equal(detailed.add(a.pixels,width,a.points,3),true)
+  assert.equal(detailed.size,6)
   assert.equal(map.add(b.pixels,width,[]),false)
   assert.equal(map.size,7)
 })
+
+test('estimates rotation and scale in the presence of an outlier',()=>{
+  const expected={a:1.08,b:.15,x:8,y:-6}
+  const matches=[{x:20,y:15},{x:100,y:18},{x:50,y:64},{x:12,y:90},{x:100,y:85}].map(from=>({from,to:project(expected,from)}))
+  matches.push({from:{x:20,y:55},to:{x:95,y:80}})
+  const actual=estimate(matches)!
+  for(const key of Object.keys(expected) as (keyof typeof expected)[]) assert.ok(Math.abs(actual[key]-expected[key])<.001)
+})
+
