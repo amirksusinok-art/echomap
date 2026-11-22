@@ -2,18 +2,23 @@ import {useEffect,useRef,useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import {Camera, ScanLine, Crosshair, Download, ShieldCheck, Grid3X3, Square} from 'lucide-react'
 import {detect} from './features.ts'
+import {PointMap,drawMap} from './point-map.ts'
 import './camera.css'
 
 function App(){
   const video=useRef<HTMLVideoElement>(null)
   const overlay=useRef<HTMLCanvasElement>(null)
+  const map=useRef(new PointMap())
+  const overview=useRef<HTMLCanvasElement>(null)
+  const [total,setTotal]=useState(0)
+  const [aligned,setAligned]=useState(true)
   const stream=useRef<MediaStream|null>(null)
   const request=useRef(0)
   const [phase,setPhase]=useState<'idle'|'loading'|'live'>('idle')
   const [error,setError]=useState('')
   const [points,setPoints]=useState(0)
   const [facing,setFacing]=useState<'environment'|'user'>('environment')
-  const [density,setDensity]=useState(7)
+  const [density,setDensity]=useState(4)
   const [dotsOnly,setDotsOnly]=useState(false)
   const live=phase==='live'
   function release(){
@@ -32,6 +37,9 @@ function App(){
   },[])
   async function start(){
     const id=++request.current
+    map.current=new PointMap();setTotal(0);setAligned(true)
+    const canvas=overview.current!
+    drawMap(canvas.getContext('2d')!,[],true)
     setError('');setPhase('loading')
     try{
       if(!window.isSecureContext||!navigator.mediaDevices?.getUserMedia)throw new Error('Для доступа к камере откройте сайт через HTTPS.')
@@ -62,21 +70,30 @@ function App(){
     function scan(now:number){
       if(player.readyState>=2&&player.videoWidth&&player.videoHeight&&player.currentTime!==lastTime&&now-lastScan>=80){
         lastTime=player.currentTime;lastScan=now
-        const scale=288/Math.max(player.videoWidth,player.videoHeight)
+        const scale=448/Math.max(player.videoWidth,player.videoHeight)
         const w=Math.round(player.videoWidth*scale),h=Math.round(player.videoHeight*scale)
         if(input.width!==w||input.height!==h){input.width=w;input.height=h}
         if(layer.width!==player.videoWidth||layer.height!==player.videoHeight){layer.width=player.videoWidth;layer.height=player.videoHeight}
         capture.drawImage(player,0,0,w,h)
-        const features=detect(capture.getImageData(0,0,w,h).data,w,h,density)
+        const pixels=capture.getImageData(0,0,w,h).data
+        const features=detect(pixels,w,h,density)
+        const accepted=map.current.add(pixels,w,features)
+        setAligned(accepted)
+        const saved=map.current.points
+        setTotal(saved.length)
+        const preview=overview.current!
+        if(accepted)drawMap(preview.getContext('2d')!,saved,true)
+        const offset=map.current.offset
+        const visible=accepted?saved.map(p=>({...p,x:p.x-offset.x,y:p.y-offset.y})).filter(p=>p.x>=0&&p.y>=0&&p.x<w&&p.y<h):features
         out.clearRect(0,0,layer.width,layer.height)
         const sx=layer.width/w,sy=layer.height/h
-        for(const p of features){
+        for(const p of visible){
           out.fillStyle='rgba(95,235,255,'+Math.min(.98,.55+p.strength/2500)+')'
           out.beginPath()
           out.arc(p.x*sx,p.y*sy,Math.min(sx,sy)*(.63+Math.min(.42,p.strength/3000)),0,Math.PI*2)
           out.fill()
         }
-        setPoints(features.length)
+        setPoints(visible.length)
       }
       frame=requestAnimationFrame(scan)
     }
@@ -121,15 +138,22 @@ function App(){
         </section>
         <aside className="card settings"><h2>Настройки</h2>
           <label>Камера<select value={facing} disabled={phase!=='idle'} onChange={e=>setFacing(e.target.value as typeof facing)}><option value="environment">Основная</option><option value="user">Фронтальная</option></select></label>
-          <label>Плотность точек<input type="range" min="4" max="13" value={17-density} onChange={e=>setDensity(17-+e.target.value)}/></label>
+          <label>Плотность точек<input type="range" min="3" max="16" value={18-density} onChange={e=>setDensity(18-+e.target.value)}/></label>
           <label className="check"><input type="checkbox" checked={dotsOnly} onChange={e=>setDotsOnly(e.target.checked)}/> Только точки</label>
-          <div className="note"><Crosshair size={18}/><p>Точки показывают детали в плоскости кадра. Для большего количества точек наведите камеру на контрастные предметы при хорошем освещении.</p></div>
+          <div className="note"><Crosshair size={18}/><p>Ведите камеру медленно, оставляя знакомые детали в кадре. На карте сохраняются точки из совмещённых кадров.</p></div>
         </aside>
       </div>
+      <section className="card point-map"><div className="bar"><h2>Карта точек</h2><span className="badge">Накоплено: {total}</span></div>
+        <canvas ref={overview} width={900} height={400} aria-label="Накопленные точки сканирования"/>
+        {live&&!aligned&&<p role="status">Кадры не совпали. Верните камеру к последнему участку и продолжайте медленнее.</p>}
+        {!total&&<p>Здесь появятся точки из кадров камеры.</p>}
+        <button className="secondary" disabled={!total} onClick={()=>{const link=document.createElement('a');link.href=overview.current!.toDataURL();link.download='echomap-map.png';link.click()}}><Download size={17}/>Сохранить карту</button>
+      </section>
       <footer><ShieldCheck size={17}/> Видео обрабатывается на устройстве.</footer>
     </main>
   </>
 }
 createRoot(document.getElementById('root')!).render(<App/>)
+
 
 

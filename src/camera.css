@@ -7,3 +7,4 @@
 @media(max-width:740px){.layout{grid-template-columns:1fr}.shell{width:calc(100% - 26px)}.card{padding:14px}.intro{padding-top:24px}.stage{aspect-ratio:4/3}}
 
 
+.point-map{margin-top:17px}.point-map canvas{display:block;width:100%;height:auto;background:#0c161e;border-radius:14px}.point-map p{color:var(--muted);font-size:13px;margin-top:10px}.point-map button{margin-top:12px}

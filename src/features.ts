@@ -26,7 +26,8 @@ export function detect(rgba:Uint8ClampedArray,width:number,height:number,spacing
       const radius=Math.floor(Math.sqrt(spacing**2-(y-p.y)**2))
       occupied.fill(1,y*width+Math.max(0,p.x-radius),y*width+Math.min(width,p.x+radius+1))
     }
-    if(points.length===700)break
+    if(points.length===2000)break
   }
   return points
 }
+
