@@ -31,4 +31,6 @@ npx playwright test
 
 Браузерные тесты по умолчанию используют Microsoft Edge. Для установленного Chrome задайте ECHOMAP_BROWSER=chrome. Тесты DSP используют известные задержки, шум и перегрузку. Браузерные тесты используют контролируемую тишину для проверки цепочки AudioWorklet и остановки дорожки. Для проверки физической акустики прогоните калибровку, Quick Scan и ручной 360° на каждом целевом устройстве, затем сравните повторные замеры при неизменной позиции телефона.
 
-`nGitHub Pages: https://amirksusinok-art.github.io/echomap/
+
+GitHub Pages: https://amirksusinok-art.github.io/echomap/
+
